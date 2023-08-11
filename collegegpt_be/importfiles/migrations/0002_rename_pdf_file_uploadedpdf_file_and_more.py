@@ -15,9 +15,9 @@ class Migration(migrations.Migration):
             old_name='pdf_file',
             new_name='file',
         ),
-        migrations.AddField(
-            model_name='uploadedpdf',
-            name='file_name',
-            field=models.CharField(default='', max_length=255),
-        ),
+        # migrations.AddField(
+        #     model_name='uploadedpdf',
+        #     name='file_name',
+        #     field=models.CharField(default='', max_length=255),
+        # ),
     ]

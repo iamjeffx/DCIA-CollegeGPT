@@ -34,7 +34,8 @@ def lazy_parse_load_from_file(self, blob: Blob) -> Iterator[Document]:
         ]
             
 
-def extract_file_data(file, file_name):
+def extract_file_data(file):
+    file_name = file.name
     file_path = file.file
     if not (file_loader_class := DOCUMENT_MAP.get(
         os.path.splitext(file_name)[1])):
@@ -46,5 +47,5 @@ def extract_file_data(file, file_name):
         file_loader = file_loader_class(file_path)
     if file_loader_class == PyMuPDFParser:
         PyMuPDFParser.lazy_parse = lazy_parse_load_from_file
-        return file_loader.parse(Blob.from_data(file_path.getvalue()))
+        return file_loader.parse(Blob.from_data(file_path.getvalue(), path=file_name))
     return file_loader.load()[0]

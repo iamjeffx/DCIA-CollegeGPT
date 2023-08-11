@@ -48,3 +48,5 @@ env.g.dart
 
 __pycache__
 collegegpt_be/collegegpt_be/.env
+.vscode/
+*:Zone.Identifier
