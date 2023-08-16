@@ -5,5 +5,5 @@ from .views import SyllabusDatesView, UploadFileView
 #When a client makes a POST request to the URL 'UploadedPDF/', the upload_and_extract_text view function will be called/executed
 urlpatterns = [
     path('syllabus/', SyllabusDatesView.as_view(), name='syllabus-dates'),
-    path('files/', UploadFileView.as_view(), name='uploadedfile-create'),
+    path('file_upload/', UploadFileView.as_view(), name='uploadedfile-create'),
 ]
