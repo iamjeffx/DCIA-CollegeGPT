@@ -18,6 +18,8 @@ from transformers import AutoTokenizer, GenerationConfig
 from jsonformer import Jsonformer
 import json
 
+import threading
+
 from importfiles.file_processing import extract_file_data
 from importfiles.jsonformer_fix import generate_number, generate_string
 # from file_formats import CalendarEventList, CalendarEvent
@@ -116,14 +118,19 @@ class UploadFileView(APIView):
         return Response(response, status=status.HTTP_200_OK)
     
     def post(self, request, format=None):
-        uploaded_file = request.FILES['file']
-        course_name = request.data['courseName']
-        extracted_text = extract_file_data(uploaded_file)
-        split_documents = text_splitter.split_documents(extracted_text)
-        if request.data['isSyllabus'] == 'true':
-            vectorsearch.index_name = f"{course_name}-syllabus"
-            vectorsearch.add_documents(split_documents)
-        vectorsearch.index_name = f"{course_name}"
+        uploaded_file_list = request.FILES.getlist('files')
+        extracted_text_list = []
+        threads = []
+        for uploaded_file in uploaded_file_list:
+            thread = threading.Thread(target=lambda e: extracted_text_list.extend(extract_file_data(e)), args=(uploaded_file))
+            threads.append(thread)
+            thread.start()
+        for thread in threads:
+            thread.join()
+        split_documents = text_splitter.split_documents(extracted_text_list)
+        if request.data['is_syllabus'] == 'true':
+            vectorsearch.index_name = "syllabus-index"
+        vectorsearch.index_name = "test-index"
         vectorsearch.add_documents(split_documents)
         return Response(status=status.HTTP_201_CREATED)
     
