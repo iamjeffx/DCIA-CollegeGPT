@@ -1,6 +1,7 @@
 // Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
 import 'dart:developer';
 
 import 'package:provider/provider.dart';
@@ -23,6 +24,7 @@ import 'package:sidebarx/sidebarx.dart';
 import 'package:mdi/mdi.dart';
 import 'package:flutter_chat_types/flutter_chat_types.dart' as types;
 import 'package:flutter_chat_ui/flutter_chat_ui.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 final GoogleSignIn _googleSignIn = GoogleSignIn(
@@ -56,10 +58,17 @@ class HomePage extends StatefulWidget {
 
 class AppState extends ChangeNotifier {
   GoogleSignInAccount? _currentUser;
+  final Future<SharedPreferences> prefs = SharedPreferences.getInstance();
   List<String> courses = [];
   TextEditingController courseName = TextEditingController();
   final _controller = SidebarXController(selectedIndex: -1, extended: true);
   final _key = GlobalKey<ScaffoldState>();
+
+  void initializeCourses() async {
+    final SharedPreferences prefs = await this.prefs;
+    courses = prefs.getStringList('courses') ?? [];
+    notifyListeners();
+  }
 
   void attachSubscription() async {
     _googleSignIn.onCurrentUserChanged.listen((GoogleSignInAccount? account) {
@@ -70,6 +79,9 @@ class AppState extends ChangeNotifier {
   }
 
   void addCourse() {
+    if (courseName.text.isEmpty) {
+      return;
+    }
     courses.add(courseName.text);
     notifyListeners();
   }
@@ -455,35 +467,50 @@ class _ChatScreenState extends State<ChatScreen> {
                   )
                 : null,
             actions: <Widget>[
-              IconButton(
-                icon: const Icon(Icons.upload_file),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) =>
-                            UploadScreen(courseIndex: widget.courseIndex)),
-                  );
-                },
-                tooltip: "Upload Files",
-              ),
-              IconButton(
-                icon: const Icon(Icons.list),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) =>
-                            FileListScreen(courseIndex: widget.courseIndex)),
-                  );
-                },
-                tooltip: "View Uploaded Files",
-              ),
+              if (widget.courseIndex != -1)
+                IconButton(
+                  icon: const Icon(Icons.upload_file),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) =>
+                              UploadScreen(courseIndex: widget.courseIndex)),
+                    );
+                  },
+                  tooltip: "Upload Files",
+                ),
+              if (widget.courseIndex != -1)
+                IconButton(
+                  icon: const Icon(Icons.list),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) =>
+                              FileListScreen(courseIndex: widget.courseIndex)),
+                    );
+                  },
+                  tooltip: "View Uploaded Files",
+                ),
+              if (widget.courseIndex != -1)
+                IconButton(
+                  icon: const Icon(Icons.calendar_today),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) =>
+                              CalendarScreen(courseIndex: widget.courseIndex)),
+                    );
+                  },
+                  tooltip: "Extract Events",
+                ),
               const IconButton(
                 icon: Icon(Icons.exit_to_app),
                 onPressed: _handleSignOut,
                 tooltip: "Sign out",
-              )
+              ),
             ],
           ),
           drawer: isSmallScreen ? CourseSidebar() : null,
@@ -509,22 +536,14 @@ class CalendarScreen extends StatefulWidget {
 class _CalendarScreenState extends State<CalendarScreen> {
   CalendarApi? calendarAPI;
   String? calendarID;
-  final eventName = TextEditingController();
-  String _eventName = '';
-
-  @override
-  void dispose() {
-    // Clean up the controller when the widget is disposed.
-    eventName.dispose();
-    super.dispose();
-  }
+  final List<TextEditingController> eventsControllers = [];
+  List<Event> events = [];
+  bool _notLoading = true;
+  bool _importSuccessful = false;
 
   Future<void> _handleGetCalendar() async {
-    setState(() {
-      _eventName = "Getting Event";
-    });
-
     // Retrieve an [auth.AuthClient] from the current [GoogleSignIn] instance.
+    debugger();
     final auth.AuthClient? client = await _googleSignIn.authenticatedClient();
     final bool isAuthorized = await _googleSignIn
         .canAccessScopes(<String>[CalendarApi.calendarScope]);
@@ -551,92 +570,232 @@ class _CalendarScreenState extends State<CalendarScreen> {
           await calendarAPI!.calendars.insert(Calendar(summary: "CollegeGPT"));
       calendarID = collegeGPTCalendar.id;
     }
-    final Events calendarEvents = await calendarAPI!.events.list(calendarID!);
     setState(() {
-      if (calendarEvents.items?.isNotEmpty ?? false) {
-        _eventName = calendarEvents.items!.first.summary ?? "No Events";
-      } else {
-        _eventName = "No Events";
+      events = [];
+      _importSuccessful = true;
+    });
+  }
+
+  Future<void> _fetchEventsFromSyllabus() async {
+    setState(() {
+      _notLoading = false;
+      _importSuccessful = false;
+    });
+    final response = await http.post(
+      Uri.parse("http://localhost:8000/syllabus/"),
+      body: {
+        "courseName": Provider.of<AppState>(context, listen: false)
+            .courses[widget.courseIndex]
+      },
+    );
+    if (response.statusCode == 200) {
+      final List fileNames =
+          jsonDecode(jsonDecode(response.body))["event_list"];
+      setState(() {
+        for (Map event in fileNames) {
+          events.add(Event(
+              summary: event["event_name"],
+              start: EventDateTime(
+                dateTime: Function.apply(
+                    DateTime.new,
+                    event["start_time"]
+                        .values
+                        .toList()
+                        .map((e) => e.toInt())
+                        .toList()),
+              ),
+              end: EventDateTime(
+                  dateTime: Function.apply(
+                      DateTime.new,
+                      event["end_time"]
+                          .values
+                          .toList()
+                          .map((e) => e.toInt())
+                          .toList()))));
+        }
+      });
+    } else {
+      throw Exception('Failed to load file names');
+    }
+    setState(() {
+      _notLoading = true;
+    });
+  }
+
+  void _handleAddEvents() {
+    if (calendarAPI == null) {
+      _handleGetCalendar();
+    }
+    setState(() {
+      for (Event event in events) {
+        calendarAPI?.events.insert(event, calendarID!);
       }
     });
   }
 
-  void _handleAddEvent() {
-    calendarAPI?.events.insert(
-        Event(
-            summary: eventName.text,
-            end: EventDateTime(date: DateTime.now()),
-            start: EventDateTime(date: DateTime.now())),
-        calendarID!);
-    eventName.clear();
-  }
-
   Widget _buildBody() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.spaceAround,
-      children: <Widget>[
-        Consumer<AppState>(builder: ((context, appstate, child) {
-          final GoogleSignInAccount? user = appstate._currentUser;
-          return ListTile(
-            leading: GoogleUserCircleAvatar(
-              identity: user!,
-            ),
-            title: Text(user.displayName ?? ''),
-            subtitle: Text(user.email),
-          );
-        })),
-        const Text('Signed in successfully.'),
-        Text(_eventName),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 100),
-          child: TextField(
-            decoration: const InputDecoration(
-                border: UnderlineInputBorder(), labelText: "Enter Event Name"),
-            controller: eventName,
-          ),
-        ),
-        ElevatedButton(
-            onPressed: _handleAddEvent, child: const Text("ADD EVENT")),
-        ElevatedButton(
-          onPressed: _handleGetCalendar,
-          child: const Text('REFRESH'),
-        ),
-      ],
-    );
+    return Container(
+        padding: const EdgeInsets.only(left: 100, right: 100, bottom: 8),
+        child: Column(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: <Widget>[
+              const Text('Import events from syllabus into Google Calendar'),
+              if (events.isNotEmpty)
+                SizedBox(
+                    width: MediaQuery.of(context).size.width * 0.8,
+                    height: MediaQuery.of(context).size.height * 0.7,
+                    child: ListView.builder(
+                      itemBuilder: (context, index) {
+                        if (index >= eventsControllers.length) {
+                          eventsControllers.add(TextEditingController.fromValue(
+                              TextEditingValue(
+                                  text: events[index].summary.toString())));
+                        } else {
+                          eventsControllers[index].text =
+                              events[index].summary.toString();
+                        }
+                        return ListTile(
+                            visualDensity: const VisualDensity(vertical: 2),
+                            title:
+                                TextField(controller: eventsControllers[index]),
+                            subtitle: const Text(""),
+                            trailing: Column(children: [
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  TextButton(
+                                      onPressed: () async {
+                                        final DateTime? chosenDate =
+                                            await showDatePicker(
+                                                context: context,
+                                                initialDate: events[index]
+                                                        .start
+                                                        ?.dateTime ??
+                                                    DateTime.now(),
+                                                firstDate: DateTime(2000),
+                                                lastDate: DateTime(2100));
+                                        setState(() {
+                                          events[index].start?.dateTime =
+                                              events[index]
+                                                  .start
+                                                  ?.dateTime
+                                                  ?.copyWith(
+                                                      year: chosenDate?.year,
+                                                      month: chosenDate?.month,
+                                                      day: chosenDate?.day);
+                                        });
+                                      },
+                                      child: Text(
+                                          "${events[index].start?.dateTime?.month}/${events[index].start?.dateTime?.day}/${events[index].start?.dateTime?.year}")),
+                                  TextButton(
+                                    onPressed: () async {
+                                      final TimeOfDay? chosenTime =
+                                          await showTimePicker(
+                                              context: context,
+                                              initialTime:
+                                                  TimeOfDay.fromDateTime(
+                                                      events[index]
+                                                              .start
+                                                              ?.dateTime ??
+                                                          DateTime.now()));
+                                      setState(() {
+                                        events[index].start?.dateTime =
+                                            events[index]
+                                                .start
+                                                ?.dateTime
+                                                ?.copyWith(
+                                                    hour: chosenTime?.hour,
+                                                    minute: chosenTime?.minute);
+                                      });
+                                    },
+                                    child: Text(
+                                        "${events[index].start?.dateTime?.hour}:${events[index].start?.dateTime?.minute}"),
+                                  ),
+                                ],
+                              ),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  TextButton(
+                                      onPressed: () async {
+                                        final DateTime? chosenDate =
+                                            await showDatePicker(
+                                                context: context,
+                                                initialDate: events[index]
+                                                        .end
+                                                        ?.dateTime ??
+                                                    DateTime.now(),
+                                                firstDate: DateTime(2000),
+                                                lastDate: DateTime(2100));
+                                        setState(() {
+                                          events[index].end?.dateTime =
+                                              events[index]
+                                                  .start
+                                                  ?.dateTime
+                                                  ?.copyWith(
+                                                      year: chosenDate?.year,
+                                                      month: chosenDate?.month,
+                                                      day: chosenDate?.day);
+                                        });
+                                      },
+                                      child: Text(
+                                          "${events[index].end?.dateTime?.month}/${events[index].end?.dateTime?.day}/${events[index].end?.dateTime?.year}")),
+                                  TextButton(
+                                    onPressed: () async {
+                                      final TimeOfDay? chosenTime =
+                                          await showTimePicker(
+                                              context: context,
+                                              initialTime:
+                                                  TimeOfDay.fromDateTime(
+                                                      events[index]
+                                                              .end
+                                                              ?.dateTime ??
+                                                          DateTime.now()));
+                                      setState(() {
+                                        events[index].end?.dateTime =
+                                            events[index]
+                                                .end
+                                                ?.dateTime
+                                                ?.copyWith(
+                                                    hour: chosenTime?.hour,
+                                                    minute: chosenTime?.minute);
+                                      });
+                                    },
+                                    child: Text(
+                                        "${events[index].end?.dateTime?.hour}:${events[index].end?.dateTime?.minute}"),
+                                  ),
+                                ],
+                              )
+                            ]));
+                      },
+                      itemCount: Provider.of<AppState>(context).courses.length,
+                    )),
+              Offstage(
+                  offstage: _notLoading,
+                  child: const Center(child: CircularProgressIndicator())),
+              Offstage(
+                  offstage: !_importSuccessful,
+                  child: const Text('Successfully imported',
+                      textAlign: TextAlign.center)),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  ElevatedButton(
+                    onPressed: _fetchEventsFromSyllabus,
+                    child: const Text('Import Events'),
+                  ),
+                  ElevatedButton(
+                      onPressed: events.isEmpty ? null : _handleAddEvents,
+                      child: const Text("Add to Calendar")),
+                ],
+              ),
+            ]));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        appBar: AppBar(
-          title: const Text('CollegeGPT'),
-          actions: <Widget>[
-            IconButton(
-              icon: const Icon(Icons.upload_file),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) =>
-                          UploadScreen(courseIndex: widget.courseIndex)),
-                );
-              },
-              tooltip: "Upload Files",
-            ),
-            IconButton(
-              icon: const Icon(Icons.list),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) =>
-                          FileListScreen(courseIndex: widget.courseIndex)),
-                );
-              },
-              tooltip: "View Uploaded Files",
-            ),
-          ],
-        ),
+        appBar: AppBar(title: const Text('Import from Syllabus')),
         body: ConstrainedBox(
           constraints: const BoxConstraints.expand(),
           child: _buildBody(),
@@ -655,7 +814,8 @@ class UploadScreen extends StatefulWidget {
 
 class _UploadScreenState extends State<UploadScreen> {
   FilePickerResult? selectedFiles;
-  int? syllabusIndex;
+  int syllabusIndex = -1;
+  bool notUploaded = true;
 
   Future<void> _pickFiles() async {
     FilePickerResult? selection = await FilePicker.platform.pickFiles(
@@ -676,6 +836,7 @@ class _UploadScreenState extends State<UploadScreen> {
       allowMultiple: true,
     );
     setState(() {
+      notUploaded = true;
       selectedFiles = selection;
     });
   }
@@ -689,8 +850,7 @@ class _UploadScreenState extends State<UploadScreen> {
     final request = http.MultipartRequest('POST', uri);
 
     for (final file in selectedFiles!.files) {
-      final filePath = file.path;
-      final mimeType = filePath != null ? lookupMimeType(filePath) : null;
+      final mimeType = lookupMimeType(file.name);
       final contentType = mimeType != null ? MediaType.parse(mimeType) : null;
 
       final fileReadStream = file.readStream;
@@ -709,11 +869,18 @@ class _UploadScreenState extends State<UploadScreen> {
       request.files.add(multipartFile);
     }
     request.fields['syllabusIndex'] = syllabusIndex.toString();
+    request.fields['courseName'] = Provider.of<AppState>(context, listen: false)
+        .courses[widget.courseIndex];
     final httpClient = http.Client();
     final response = await httpClient.send(request);
 
-    if (response.statusCode != 200) {
+    if (response.statusCode != 201) {
       throw Exception('HTTP ${response.statusCode}');
+    } else {
+      setState(() {
+        selectedFiles = null;
+        notUploaded = false;
+      });
     }
   }
 
@@ -764,7 +931,7 @@ class _UploadScreenState extends State<UploadScreen> {
                                   });
                                 } else {
                                   setState(() {
-                                    syllabusIndex = null;
+                                    syllabusIndex = -1;
                                   });
                                 }
                               },
@@ -783,6 +950,17 @@ class _UploadScreenState extends State<UploadScreen> {
                         itemCount: selectedFiles?.files.length ?? 1)
                   ],
                 ),
+                Offstage(
+                    offstage: notUploaded,
+                    child: const Align(
+                      alignment: Alignment.center,
+                      child: Padding(
+                        padding: EdgeInsets.all(8.0),
+                        child: Text(
+                          'Upload Successful',
+                        ),
+                      ),
+                    )),
                 ElevatedButton(
                   onPressed: selectedFiles?.files.isEmpty ?? true
                       ? null
@@ -805,19 +983,25 @@ class FileListScreen extends StatefulWidget {
 
 class _FileListScreenState extends State<FileListScreen> {
   late List<String> fileNames;
+  bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
+    fileNames = [];
+    _isLoading = true;
     _fetchFileNames().then((value) => setState(() {
           fileNames = value;
+          _isLoading = false;
         }));
   }
 
   Future<List<String>> _fetchFileNames() async {
-    final response = await http.get(
-      Uri.parse("http://localhost:8000/file_upload/"),
-    );
+    final response =
+        await http.post(Uri.parse("http://localhost:8000/file_list/"), body: {
+      "courseName": Provider.of<AppState>(context, listen: false)
+          .courses[widget.courseIndex]
+    });
     if (response.statusCode == 200) {
       final List<String> fileNames =
           jsonDecode(jsonDecode(response.body))["file_names"].cast<String>();
@@ -828,9 +1012,12 @@ class _FileListScreenState extends State<FileListScreen> {
   }
 
   Future<void> _deleteFile(String fileName) async {
-    final response = await http.delete(
-        Uri.parse("http://localhost:8000/file_upload/"),
-        body: {"file_name": fileName});
+    final response = await http
+        .delete(Uri.parse("http://localhost:8000/file_upload/"), body: {
+      "file_name": fileName,
+      "courseName": Provider.of<AppState>(context, listen: false)
+          .courses[widget.courseIndex]
+    });
     if (response.statusCode == 200) {
       setState(() {
         fileNames.remove(fileName);
@@ -844,37 +1031,49 @@ class _FileListScreenState extends State<FileListScreen> {
     return Column(
       mainAxisAlignment: MainAxisAlignment.spaceAround,
       children: <Widget>[
-        Expanded(
-            child: ListView.builder(
-                itemCount: fileNames.length,
-                itemBuilder: (context, index) {
-                  return ListTile(
-                      key: Key(fileNames[index]),
-                      title: Text(fileNames[index]),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete),
-                        onPressed: () async {
-                          try {
-                            await _deleteFile(fileNames[index]);
-                          } on Exception catch (e) {
-                            showDialog<String>(
-                                context: context,
-                                builder: (BuildContext context) => AlertDialog(
-                                        title:
-                                            const Text("Error when deleting"),
-                                        content: Text(e.toString()),
-                                        actions: <Widget>[
-                                          TextButton(
-                                            onPressed: () =>
-                                                Navigator.pop(context),
-                                            child: const Text('OK'),
-                                          )
-                                        ]));
-                          }
-                        },
-                        tooltip: "Delete file",
-                      ));
-                }))
+        if (_isLoading) const Center(child: CircularProgressIndicator()),
+        if (fileNames.isEmpty && !_isLoading)
+          const Center(child: Text('No files uploaded')),
+        if (fileNames.isNotEmpty && !_isLoading)
+          Expanded(
+              child: ListView.builder(
+                  itemCount: fileNames.length,
+                  itemBuilder: (context, index) {
+                    return ListTile(
+                        key: Key(fileNames[index]),
+                        title: Text(fileNames[index]),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete),
+                          onPressed: () async {
+                            try {
+                              setState(() {
+                                _isLoading = true;
+                              });
+                              await _deleteFile(fileNames[index]);
+                            } on Exception catch (e) {
+                              showDialog<String>(
+                                  context: context,
+                                  builder: (BuildContext context) =>
+                                      AlertDialog(
+                                          title:
+                                              const Text("Error when deleting"),
+                                          content: Text(e.toString()),
+                                          actions: <Widget>[
+                                            TextButton(
+                                              onPressed: () =>
+                                                  Navigator.pop(context),
+                                              child: const Text('OK'),
+                                            )
+                                          ]));
+                            } finally {
+                              setState(() {
+                                _isLoading = false;
+                              });
+                            }
+                          },
+                          tooltip: "Delete file",
+                        ));
+                  }))
       ],
     );
   }

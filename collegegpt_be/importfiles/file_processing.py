@@ -47,5 +47,5 @@ def extract_file_data(file):
         file_loader = file_loader_class(file_path)
     if file_loader_class == PyMuPDFParser:
         PyMuPDFParser.lazy_parse = lazy_parse_load_from_file
-        return file_loader.parse(Blob.from_data(file_path.getvalue(), path=file_name))
+        return file_loader.parse(Blob.from_data(file_path.read(), path=file_name))
     return file_loader.load()[0]

@@ -53,18 +53,11 @@ json_schema = {
                 "type": "object",
                 "properties": {
                     "event_name": {"type": "string"},
-                    "start_date": {"type": "object", 
-                                "properties": 
-                                    {"year": {"type": "number"}, "month": {"type": "number"}, "day": {"type": "number"}}
-                                    },
                     "start_time": {"type": "object", 
-                                "properties": {"hour": {"type": "number"}, "minutes": {"type": "number"}}
-                                },
-                    "end_date": {"type": "object", 
-                                "properties": {"year": {"type": "number"}, "month": {"type": "number"}, "day": {"type": "number"}}
+                                "properties": {"year": {"type": "number"}, "month": {"type": "number"}, "day": {"type": "number"}, "hour": {"type": "number"}, "minute": {"type": "number"}}
                                 },
                     "end_time": {"type": "object", 
-                                "properties": {"hour": {"type": "number"}, "minutes": {"type": "number"}}
+                                "properties": {"year": {"type": "number"}, "month": {"type": "number"}, "day": {"type": "number"}, "hour": {"type": "number"}, "minute": {"type": "number"}}
                                 },
                 }
             }
@@ -76,6 +69,13 @@ model = AutoGPTQForCausalLM.from_quantized("TheBloke/Llama-2-13B-chat-GPTQ", con
 tokenizer = AutoTokenizer.from_pretrained("TheBloke/Llama-2-13B-chat-GPTQ", use_fast=True)
 generation_config = GenerationConfig(max_length=4096, temperature=0.7, top_p=0.1, repetition_penalty=1.18, top_k=40)
 
+def extract_and_split(extracted_text_list, uploaded_file, isSyllabus):
+    extracted_text = extract_file_data(uploaded_file)
+    split_text = text_splitter.split_documents(extracted_text)
+    extracted_text_list.extend(split_text)
+    if isSyllabus:
+        vectorsearch.add_documents(split_text)
+    
 # @lmql.query
 # def chatbot(question: str, information: str):
 #     '''lmql
@@ -104,43 +104,49 @@ generation_config = GenerationConfig(max_length=4096, temperature=0.7, top_p=0.1
 #             return Response(serializer.data, status=status.HTTP_201_CREATED)
 #         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
-class UploadFileView(APIView):
-    def get(self, request, format=None):
-        response = vectorsearch.client.search(index='test-index', body={"query": {"match_all": {}}}, _source=["metadata"], size=10000)
-        response = json.dumps(
-            {
-                "file_names": {
-                    hit['_source']['metadata']['source']
-                    for hit in response['hits']['hits']
-                }
-            }
-        )
-        return Response(response, status=status.HTTP_200_OK)
-    
+class UploadFileView(APIView):    
     def post(self, request, format=None):
-        uploaded_file_list = request.FILES.getlist('files')
-        extracted_text_list = []
+        uploaded_file_list = request.FILES.getlist('file')
+        course_name = request.data['courseName']
+        syllabusIndex = int(request.data['syllabusIndex'])
+        extracted_split_text_list = []
         threads = []
-        for uploaded_file in uploaded_file_list:
-            thread = threading.Thread(target=lambda e: extracted_text_list.extend(extract_file_data(e)), args=(uploaded_file))
+        if syllabusIndex > -1:
+            if vectorsearch.client.indices.exists(index=f"{course_name}-syllabus"):
+                vectorsearch.client.delete_by_query(index=f"{course_name}-syllabus", body={"query": {"match_all": {}}})
+            vectorsearch.index_name = f"{course_name}-syllabus"
+        for i in range(len(uploaded_file_list)):
+            thread = threading.Thread(target=extract_and_split, args=[extracted_split_text_list, uploaded_file_list[i], i == syllabusIndex])
             threads.append(thread)
             thread.start()
         for thread in threads:
             thread.join()
-        split_documents = text_splitter.split_documents(extracted_text_list)
-        if request.data['is_syllabus'] == 'true':
-            vectorsearch.index_name = "syllabus-index"
-        vectorsearch.index_name = "test-index"
-        vectorsearch.add_documents(split_documents)
+        vectorsearch.index_name = f"{course_name}-index"
+        vectorsearch.add_documents(extracted_split_text_list)
         return Response(status=status.HTTP_201_CREATED)
     
     def delete(self, request, format=None):
-        vectorsearch.client.delete_by_query(index="test-index", body={"query": {"term": {"metadata.source": request.data['file_name']}}})
+        course_name = request.data['courseName']
+        vectorsearch.client.delete_by_query(index=f"{course_name}-index", body={"query": {"term": {"metadata.source": request.data['file_name']}}})
         return Response(status=status.HTTP_200_OK)
     
+class FileListView(APIView):
+    def post(self, request, format=None):
+        course_name = request.data['courseName']
+        response = vectorsearch.client.search(index=f"{course_name}-index", body={"query": {"match_all": {}}}, _source=["metadata"], size=10000)
+        response = json.dumps(
+            {
+                "file_names": list({
+                    hit['_source']['metadata']['source']
+                    for hit in response['hits']['hits']
+                })
+            }
+        )
+        return Response(response, status=status.HTTP_200_OK)
+    
 class SyllabusDatesView(APIView):
-    def get(self, request, format=None):
-        course_name = request.data['course_name']
+    def post(self, request, format=None):
+        course_name = request.data['courseName']
         vectorsearch.index_name = f"{course_name}-syllabus"
         prompt = "List the important dates contained in the syllabus in chronological order."
         results = {d.page_content for d in vectorsearch.similarity_search("important dates", 10)}
