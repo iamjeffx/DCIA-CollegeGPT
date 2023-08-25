@@ -162,3 +162,30 @@ class SyllabusDatesView(APIView):
         # print(events)
         return Response(events, status=status.HTTP_200_OK)
     
+class CourseManagementView(APIView):
+    def delete(self, request, format=None):
+        course_name = request.data['courseName']
+        vectorsearch.client.delete_by_query(index=f"{course_name}-index", body={"query": {"match_all": {}}})
+        return Response(status=status.HTTP_200_OK)
+    
+class ChatbotView(APIView):
+    def post(self, request, format=None):
+        course_name = request.data['courseName']
+        context_messages = [json.loads(message) for message in request.data['context']]
+        user_message = request.data["message"]
+        vectorsearch.index_name = f"{course_name}-index"
+        context = []
+        for message in context_messages:
+            text = message["text"]
+            if message["id"] == "Assistant":
+                context += f"{text} </s><s>[INST] "
+            else:
+                context += f"{text} [/INST] "
+        results = {d.page_content for d in vectorsearch.similarity_search(user_message, 10)}
+        information = "\n\n".join([f"...{r}..." for r in list(results)])
+        print(information)
+        context += f"{user_message} \nRelevant Information:\n{information} You do not need to use this information if it is irrelevant. [/INST] "
+        context = "".join(context)
+        prompt_template = """[INST] <<SYS>>\nYou are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature. If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information.\n<</SYS>>\n{context}"""
+        output = tokenizer.decode(model.generate(**tokenizer(prompt_template.format(context=context), return_tensors="pt").to(model.device), generation_config=generation_config)[0]).split("[/INST]")[-1].removesuffix("</s>").strip()
+        return Response(output, status=status.HTTP_200_OK)

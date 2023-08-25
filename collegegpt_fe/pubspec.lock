@@ -813,6 +813,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.2.0"
+  string_unescape:
+    dependency: "direct main"
+    description:
+      name: string_unescape
+      sha256: b9628c8516cbb47ffced9a47440942ac7b480efd9b7dcd5058e27cf6819e99f7
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.0.0"
   term_glyph:
     dependency: transitive
     description:

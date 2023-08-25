@@ -21,9 +21,6 @@ def generate_number(self, temperature: Union[float, None] = None, iterations=0):
             ],
             temperature=temperature or self.temperature,
             pad_token_id=self.tokenizer.eos_token_id,
-            top_p=0.1, 
-            repetition_penalty=1.18, 
-            top_k=40,
         )
         response = self.tokenizer.decode(response[0], skip_special_tokens=True)
 
@@ -53,9 +50,6 @@ def generate_string(self) -> str:
                 StringStoppingCriteria(self.tokenizer, len(input_tokens[0]))
             ],
             pad_token_id=self.tokenizer.eos_token_id,
-            top_p=0.1, 
-            repetition_penalty=1.18, 
-            top_k=40,
         )
 
         # Some models output the prompt as part of the response

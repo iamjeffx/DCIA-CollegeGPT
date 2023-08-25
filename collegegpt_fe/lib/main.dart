@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'dart:developer';
+import 'dart:io';
 
 import 'package:provider/provider.dart';
 
@@ -25,6 +26,7 @@ import 'package:mdi/mdi.dart';
 import 'package:flutter_chat_types/flutter_chat_types.dart' as types;
 import 'package:flutter_chat_ui/flutter_chat_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:string_unescape/string_unescape.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 final GoogleSignIn _googleSignIn = GoogleSignIn(
@@ -58,16 +60,20 @@ class HomePage extends StatefulWidget {
 
 class AppState extends ChangeNotifier {
   GoogleSignInAccount? _currentUser;
-  final Future<SharedPreferences> prefs = SharedPreferences.getInstance();
+  SharedPreferences? prefs;
   List<String> courses = [];
   TextEditingController courseName = TextEditingController();
+  bool deleteMode = false;
   final _controller = SidebarXController(selectedIndex: -1, extended: true);
   final _key = GlobalKey<ScaffoldState>();
 
   void initializeCourses() async {
-    final SharedPreferences prefs = await this.prefs;
-    courses = prefs.getStringList('courses') ?? [];
-    notifyListeners();
+    prefs = await SharedPreferences.getInstance();
+    courses = prefs?.getStringList('courses') ?? [];
+  }
+
+  void saveCourses() {
+    prefs?.setStringList('courses', courses);
   }
 
   void attachSubscription() async {
@@ -78,11 +84,27 @@ class AppState extends ChangeNotifier {
     _currentUser = await _googleSignIn.signInSilently();
   }
 
+  void toggleDeleteMode() {
+    deleteMode = !deleteMode;
+    notifyListeners();
+  }
+
   void addCourse() {
     if (courseName.text.isEmpty) {
       return;
     }
     courses.add(courseName.text);
+    notifyListeners();
+  }
+
+  void removeCourse(int index) async {
+    final response = await http.delete(
+        Uri.parse("http://localhost:8000/course_delete/"),
+        body: {"courseName": courses[index]});
+    if (response.statusCode != 200) {
+      throw Exception('Failed to delete course');
+    }
+    courses.removeAt(index);
     notifyListeners();
   }
 
@@ -93,6 +115,12 @@ class AppState extends ChangeNotifier {
 }
 
 class _HomePageState extends State<HomePage> {
+  @override
+  void initState() {
+    super.initState();
+    Provider.of<AppState>(context, listen: false).initializeCourses();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<AppState>(builder: (context, appstate, child) {
@@ -194,17 +222,24 @@ class CourseSidebar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<AppState>(
       builder: (context, appstate, child) {
+        bool deleteMode = appstate.deleteMode;
+        List courses = appstate.courses;
         return SidebarX(
           controller: appstate._controller,
           items: [
             for (int courseIndex = 0;
-                courseIndex < appstate.courses.length;
+                courseIndex < courses.length;
                 courseIndex++)
               SidebarXItem(
-                  icon: letterToIcon[
-                      appstate.courses[courseIndex][0].toLowerCase()]!,
-                  label: appstate.courses[courseIndex],
+                  icon: deleteMode
+                      ? Icons.delete_outline
+                      : letterToIcon[courses[courseIndex][0].toLowerCase()]!,
+                  label: courses[courseIndex],
                   onTap: () {
+                    if (deleteMode) {
+                      appstate.removeCourse(courseIndex);
+                      return;
+                    }
                     appstate.setCourseIndex(courseIndex);
                   }),
             SidebarXItem(
@@ -228,52 +263,48 @@ class CourseSidebar extends StatelessWidget {
               selectedItemTextPadding: EdgeInsets.only(left: 30)),
           headerBuilder: (context, extended) {
             final GoogleSignInAccount? user = appstate._currentUser;
-            return Row(children: [
-              GoogleUserCircleAvatar(
-                identity: user!,
-              ),
-              Column(
-                children: [
-                  FutureBuilder(
-                    future: Future.delayed(animationTime, () {
-                      return Text(user.displayName ?? '',
-                          overflow: TextOverflow.fade);
-                    }),
-                    builder: (context, snapshot) {
-                      if (extended) {
-                        if (snapshot.connectionState ==
-                            ConnectionState.waiting) {
-                          return const SizedBox();
-                        }
-                        return snapshot.data ?? const SizedBox();
-                      } else {
-                        return const SizedBox();
-                      }
-                    },
-                  ),
-                  FutureBuilder(
-                    future: Future.delayed(animationTime, () {
-                      return Text(user.email,
-                          style: DefaultTextStyle.of(context)
-                              .style
-                              .apply(fontSizeFactor: 0.8),
-                          overflow: TextOverflow.fade);
-                    }),
-                    builder: (context, snapshot) {
-                      if (extended) {
-                        if (snapshot.connectionState ==
-                            ConnectionState.waiting) {
-                          return const SizedBox();
-                        }
-                        return snapshot.data ?? const SizedBox();
-                      } else {
-                        return const SizedBox();
-                      }
-                    },
-                  ),
-                ],
-              )
-            ]);
+            return Column(
+              children: [
+                FittedBox(
+                    fit: BoxFit.fill,
+                    clipBehavior: Clip.antiAlias,
+                    child: Row(children: [
+                      GoogleUserCircleAvatar(
+                        identity: user!,
+                      ),
+                      if (extended)
+                        Column(
+                          children: [
+                            Text(user.displayName ?? '',
+                                overflow: TextOverflow.clip),
+                            Text(user.email,
+                                style: DefaultTextStyle.of(context)
+                                    .style
+                                    .apply(fontSizeFactor: 0.8),
+                                overflow: TextOverflow.clip),
+                          ],
+                        )
+                    ])),
+                if (extended)
+                  FittedBox(
+                      clipBehavior: Clip.antiAlias,
+                      child: Row(children: [
+                        Ink(
+                            key: const ValueKey('deleteModeButton'),
+                            color: deleteMode ? Colors.red : Colors.transparent,
+                            child: IconButton(
+                                onPressed: () {
+                                  appstate.toggleDeleteMode();
+                                },
+                                icon: const Icon(Icons.delete_outline),
+                                tooltip: "Select Courses to Delete")),
+                        IconButton(
+                            onPressed: appstate.saveCourses,
+                            icon: const Icon(Icons.save),
+                            tooltip: "Save Courses")
+                      ]))
+              ],
+            );
           },
           animationDuration: animationTime,
         );
@@ -333,75 +364,75 @@ class _AddCourseDialog extends Dialog {
   }
 }
 
-class CourseManagementScreen extends StatefulWidget {
-  const CourseManagementScreen({super.key});
+// class CourseManagementScreen extends StatefulWidget {
+//   const CourseManagementScreen({super.key});
 
-  @override
-  State<CourseManagementScreen> createState() => _CourseManagementScreenState();
-}
+//   @override
+//   State<CourseManagementScreen> createState() => _CourseManagementScreenState();
+// }
 
-class _CourseManagementScreenState extends State<CourseManagementScreen> {
-  Widget _buildBody() {
-    return Consumer<AppState>(builder: (context, appstate, child) {
-      if (appstate.courses.isEmpty) {
-        return const Center(child: Text('No courses'));
-      } else {
-        return Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: GridView.count(crossAxisCount: 2, children: <Widget>[
-              for (int courseIndex = 0;
-                  courseIndex < appstate.courses.length;
-                  courseIndex++)
-                ElevatedButton(
-                    onPressed: () {
-                      appstate.setCourseIndex(courseIndex);
-                    },
-                    child: Text(appstate.courses[courseIndex]))
-            ]));
-      }
-    });
-  }
+// class _CourseManagementScreenState extends State<CourseManagementScreen> {
+//   Widget _buildBody() {
+//     return Consumer<AppState>(builder: (context, appstate, child) {
+//       if (appstate.courses.isEmpty) {
+//         return const Center(child: Text('No courses'));
+//       } else {
+//         return Padding(
+//             padding: const EdgeInsets.all(8.0),
+//             child: GridView.count(crossAxisCount: 2, children: <Widget>[
+//               for (int courseIndex = 0;
+//                   courseIndex < appstate.courses.length;
+//                   courseIndex++)
+//                 ElevatedButton(
+//                     onPressed: () {
+//                       appstate.setCourseIndex(courseIndex);
+//                     },
+//                     child: Text(appstate.courses[courseIndex]))
+//             ]));
+//       }
+//     });
+//   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Builder(builder: (context) {
-      final isSmallScreen = MediaQuery.of(context).size.width < 600;
-      final key = Provider.of<AppState>(context)._key;
-      return Scaffold(
-          key: key,
-          appBar: AppBar(
-            title: const Text('CollegeGPT'),
-            leading: isSmallScreen
-                ? IconButton(
-                    icon: const Icon(Icons.menu),
-                    onPressed: () => key.currentState?.openDrawer(),
-                  )
-                : null,
-            actions: const <Widget>[
-              IconButton(
-                icon: Icon(Icons.exit_to_app),
-                onPressed: _handleSignOut,
-                tooltip: "Sign out",
-              ),
-            ],
-          ),
-          drawer: isSmallScreen ? CourseSidebar() : null,
-          body: Row(children: [
-            if (!isSmallScreen) CourseSidebar(),
-            Expanded(
-              child: Center(child: _buildBody()),
-            )
-          ]),
-          floatingActionButton: FloatingActionButton(
-            onPressed: () => showDialog(
-                context: context,
-                builder: (BuildContext context) => _AddCourseDialog()),
-            tooltip: "New course",
-            child: const Icon(Icons.add),
-          ));
-    });
-  }
-}
+//   @override
+//   Widget build(BuildContext context) {
+//     return Builder(builder: (context) {
+//       final isSmallScreen = MediaQuery.of(context).size.width < 600;
+//       final key = Provider.of<AppState>(context)._key;
+//       return Scaffold(
+//           key: key,
+//           appBar: AppBar(
+//             title: const Text('CollegeGPT'),
+//             leading: isSmallScreen
+//                 ? IconButton(
+//                     icon: const Icon(Icons.menu),
+//                     onPressed: () => key.currentState?.openDrawer(),
+//                   )
+//                 : null,
+//             actions: const <Widget>[
+//               IconButton(
+//                 icon: Icon(Icons.exit_to_app),
+//                 onPressed: _handleSignOut,
+//                 tooltip: "Sign out",
+//               ),
+//             ],
+//           ),
+//           drawer: isSmallScreen ? CourseSidebar() : null,
+//           body: Row(children: [
+//             if (!isSmallScreen) CourseSidebar(),
+//             Expanded(
+//               child: Center(child: _buildBody()),
+//             )
+//           ]),
+//           floatingActionButton: FloatingActionButton(
+//             onPressed: () => showDialog(
+//                 context: context,
+//                 builder: (BuildContext context) => _AddCourseDialog()),
+//             tooltip: "New course",
+//             child: const Icon(Icons.add),
+//           ));
+//     });
+//   }
+// }
 
 class ChatScreen extends StatefulWidget {
   ChatScreen({required this.courseIndex})
@@ -412,10 +443,29 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
-  final List<types.Message> _messages = [];
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
+  final List<types.TextMessage> _messages = [];
   late String _id;
   late types.User _user;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState appLifecycleState) {
+    if (appLifecycleState == AppLifecycleState.detached) {
+      Provider.of<AppState>(context, listen: false).saveCourses();
+    }
+  }
 
   Widget _buildBody() {
     if (Provider.of<AppState>(context)._controller.selectedIndex == -1) {
@@ -430,10 +480,48 @@ class _ChatScreenState extends State<ChatScreen> {
         ));
   }
 
-  void _addMessage(types.Message message) {
+  void _clearHistory() {
+    setState(() {
+      _messages.clear();
+    });
+  }
+
+  Future<void> _addMessage(types.TextMessage message) async {
+    List<String> messagesJson = _messages
+        .map((e) => jsonEncode({"id": e.id, "text": e.text}))
+        .toList()
+        .reversed
+        .toList();
+
     setState(() {
       _messages.insert(0, message);
     });
+
+    String body = jsonEncode({
+      "courseName": Provider.of<AppState>(context, listen: false)
+          .courses[widget.courseIndex],
+      "context": messagesJson,
+      "message": message.text
+    });
+    final response = await http.post(Uri.parse("http://localhost:8000/chat/"),
+        body: body, headers: {"Content-Type": "application/json"});
+
+    if (response.statusCode == 200) {
+      final String reply = unescape(response.body);
+
+      final replyMessage = types.TextMessage(
+        author: const types.User(id: "Assistant"),
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        id: "Assistant",
+        text: reply,
+      );
+
+      setState(() {
+        _messages.insert(0, replyMessage);
+      });
+    } else {
+      throw Exception('Failed to get reply');
+    }
   }
 
   void _handleSendPressed(types.PartialText message) {
@@ -467,6 +555,12 @@ class _ChatScreenState extends State<ChatScreen> {
                   )
                 : null,
             actions: <Widget>[
+              if (widget.courseIndex != -1)
+                IconButton(
+                  icon: const Icon(Icons.cleaning_services),
+                  onPressed: _clearHistory,
+                  tooltip: "Clear History",
+                ),
               if (widget.courseIndex != -1)
                 IconButton(
                   icon: const Icon(Icons.upload_file),
