@@ -56,10 +56,10 @@ import json
 class ChatbotViewTestCase(APITestCase):
     def setUp(self):
         self.url = reverse('chatbot')
-        self.chatbot_data = {'context': [json.dumps({"id": "Bob", "text": "Hello"}), json.dumps({"id": "Assistant", "text": "How are you doing today?"})], "courseName": 'test', "message": "Do you know about updog?"}
+        self.chatbot_data = json.dumps({'context': [json.dumps({"id": "Bob", "text": "Hello"}), json.dumps({"id": "Assistant", "text": "How are you doing today?"})], "courseName": 'test', "message": "Do you know about updog?"})
         
     def test_chatbot(self):
-        response = self.client.post(self.url, self.chatbot_data)
+        response = self.client.post(self.url, self.chatbot_data, content_type="application/json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         print(response.data)
         self.assertEqual(response.data, "What's updog?")

@@ -12,7 +12,7 @@ from decouple import config
 import boto3
 from requests_aws4auth import AWS4Auth
 from opensearchpy import RequestsHttpConnection
-# import lmql
+import lmql
 from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
 from transformers import AutoTokenizer, GenerationConfig
 from jsonformer import Jsonformer
@@ -76,8 +76,35 @@ def extract_and_split(extracted_text_list, uploaded_file, isSyllabus):
     if isSyllabus:
         vectorsearch.add_documents(split_text)
     
+def escape(text):
+    return text.replace("[", "[[").replace("]", "]]")
+
 # @lmql.query
-# def chatbot(question: str, information: str):
+# def chatbot(history: str, user_message: str):
+#     '''lmql
+#     sample(temperature=0.7, max_len=4096)
+#         """[[INST]] <<SYS>>
+#         You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature. If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information.
+#         <</SYS>>"""
+#         "{history}{user_message} [response] "
+#     from
+#         lmql.model("TheBloke/Llama-2-13B-chat-GPTQ")
+#     '''
+    
+@lmql.query
+def needs_info(history: str, user_message: str):
+    '''lmql
+    sample(temperature=0.7, max_len=4096)
+        """[[INST]] <<SYS>>
+        You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature. If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information.
+        <</SYS>>"""
+        "{history}{user_message} [[/INST]] Do I need more information? [search] " where search in ["Yes", "No"]
+    from
+        lmql.model("TheBloke/Llama-2-13B-chat-GPTQ")
+    '''
+
+# @lmql.query
+# def extract_dates(question: str, information: str):
 #     '''lmql
 #     sample(temperature=0.7, max_len=4096)
 #         """[INST] <<SYS>>
@@ -90,6 +117,7 @@ def extract_and_split(extracted_text_list, uploaded_file, isSyllabus):
 #     where
 #         type(ImportantEvents) is CalendarEvent
 #     '''
+
 
 # class UploadedPDFListCreateView(APIView):
 #     def get(self, request, format=None):
@@ -181,11 +209,17 @@ class ChatbotView(APIView):
                 context += f"{text} </s><s>[INST] "
             else:
                 context += f"{text} [/INST] "
-        results = {d.page_content for d in vectorsearch.similarity_search(user_message, 10)}
-        information = "\n\n".join([f"...{r}..." for r in list(results)])
-        print(information)
-        context += f"{user_message} \nRelevant Information:\n{information} You do not need to use this information if it is irrelevant. [/INST] "
-        context = "".join(context)
+        search = needs_info(escape("".join(context)), user_message)[0].variables["search"]
+        print(search)
+        if search == "Yes":
+            results = {d.page_content for d in vectorsearch.similarity_search(user_message, 10)}
+            information = "\n\n".join([f"...{r}..." for r in list(results)])
+            print(information)
+            context += f"{user_message} \nRelevant Information:\n{information} [/INST] "
+        else:
+            context += f"{user_message} [/INST] "
+        context_string = "".join(context)
+        
         prompt_template = """[INST] <<SYS>>\nYou are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature. If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information.\n<</SYS>>\n{context}"""
-        output = tokenizer.decode(model.generate(**tokenizer(prompt_template.format(context=context), return_tensors="pt").to(model.device), generation_config=generation_config)[0]).split("[/INST]")[-1].removesuffix("</s>").strip()
+        output = tokenizer.decode(model.generate(**tokenizer(prompt_template.format(context=context_string), return_tensors="pt").to(model.device), generation_config=generation_config)[0]).split("[/INST]")[-1].removesuffix("</s>").strip()
         return Response(output, status=status.HTTP_200_OK)

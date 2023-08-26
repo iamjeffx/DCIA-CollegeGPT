@@ -16,21 +16,16 @@ DOCUMENT_MAP = {
 
 
 @dataclass
-class Date:
+class DateTime:
     year: int
     month: int
     day: int
-    
-@dataclass
-class DateTime:
     hour: int
-    minutes: int
+    minute: int
 @dataclass
 class CalendarEvent:
     event_name: str
-    start_date: Date
     start_time: DateTime
-    end_date: Date
     end_time: DateTime
     
 @dataclass
