@@ -2,8 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'dart:developer';
-import 'dart:io';
+import 'dart:math';
 
 import 'package:provider/provider.dart';
 
@@ -27,6 +26,7 @@ import 'package:flutter_chat_types/flutter_chat_types.dart' as types;
 import 'package:flutter_chat_ui/flutter_chat_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:string_unescape/string_unescape.dart';
+import 'package:intl/intl.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 final GoogleSignIn _googleSignIn = GoogleSignIn(
@@ -488,7 +488,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Future<void> _addMessage(types.TextMessage message) async {
     List<String> messagesJson = _messages
-        .map((e) => jsonEncode({"id": e.id, "text": e.text}))
+        .map((e) => jsonEncode({"id": e.author.id, "text": e.text}))
         .toList()
         .reversed
         .toList();
@@ -512,7 +512,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final replyMessage = types.TextMessage(
         author: const types.User(id: "Assistant"),
         createdAt: DateTime.now().millisecondsSinceEpoch,
-        id: "Assistant",
+        id: Random().nextInt(10000).toString(),
         text: reply,
       );
 
@@ -537,8 +537,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    _id = Provider.of<AppState>(context)._currentUser!.id;
-    _user = types.User(id: _id);
+    _id = Random().nextInt(10000).toString();
+    _user = types.User(id: Provider.of<AppState>(context)._currentUser!.id);
 
     return Builder(builder: (context) {
       final isSmallScreen = MediaQuery.of(context).size.width < 600;
@@ -634,10 +634,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
   List<Event> events = [];
   bool _notLoading = true;
   bool _importSuccessful = false;
+  bool _addSuccessful = false;
+  DateFormat dateFormat = DateFormat("MM/dd/yyyy");
+  DateFormat timeFormat = DateFormat("HH:mm");
 
   Future<void> _handleGetCalendar() async {
     // Retrieve an [auth.AuthClient] from the current [GoogleSignIn] instance.
-    debugger();
     final auth.AuthClient? client = await _googleSignIn.authenticatedClient();
     final bool isAuthorized = await _googleSignIn
         .canAccessScopes(<String>[CalendarApi.calendarScope]);
@@ -724,6 +726,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       for (Event event in events) {
         calendarAPI?.events.insert(event, calendarID!);
       }
+      _addSuccessful = true;
     });
   }
 
@@ -779,8 +782,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                                                       day: chosenDate?.day);
                                         });
                                       },
-                                      child: Text(
-                                          "${events[index].start?.dateTime?.month}/${events[index].start?.dateTime?.day}/${events[index].start?.dateTime?.year}")),
+                                      child: Text(dateFormat.format(
+                                          events[index].start!.dateTime!))),
                                   TextButton(
                                     onPressed: () async {
                                       final TimeOfDay? chosenTime =
@@ -802,8 +805,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                                                     minute: chosenTime?.minute);
                                       });
                                     },
-                                    child: Text(
-                                        "${events[index].start?.dateTime?.hour}:${events[index].start?.dateTime?.minute}"),
+                                    child: Text(timeFormat.format(
+                                        events[index].start!.dateTime!)),
                                   ),
                                 ],
                               ),
@@ -832,8 +835,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                                                       day: chosenDate?.day);
                                         });
                                       },
-                                      child: Text(
-                                          "${events[index].end?.dateTime?.month}/${events[index].end?.dateTime?.day}/${events[index].end?.dateTime?.year}")),
+                                      child: Text(dateFormat.format(
+                                          events[index].end!.dateTime!))),
                                   TextButton(
                                     onPressed: () async {
                                       final TimeOfDay? chosenTime =
@@ -855,8 +858,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                                                     minute: chosenTime?.minute);
                                       });
                                     },
-                                    child: Text(
-                                        "${events[index].end?.dateTime?.hour}:${events[index].end?.dateTime?.minute}"),
+                                    child: Text(timeFormat
+                                        .format(events[index].end!.dateTime!)),
                                   ),
                                 ],
                               )
@@ -870,6 +873,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
               Offstage(
                   offstage: !_importSuccessful,
                   child: const Text('Successfully imported',
+                      textAlign: TextAlign.center)),
+              Offstage(
+                  offstage: !_addSuccessful,
+                  child: const Text('Successfully added to calendar',
                       textAlign: TextAlign.center)),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,

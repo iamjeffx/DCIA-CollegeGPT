@@ -67,7 +67,7 @@ json_schema = {
 
 model = AutoGPTQForCausalLM.from_quantized("TheBloke/Llama-2-13B-chat-GPTQ", config=BaseQuantizeConfig(group_size=128, desc_act=False), use_safetensors=True, device="cuda:0")
 tokenizer = AutoTokenizer.from_pretrained("TheBloke/Llama-2-13B-chat-GPTQ", use_fast=True)
-generation_config = GenerationConfig(max_length=4096, temperature=0.7, top_p=0.1, repetition_penalty=1.18, top_k=40)
+generation_config = GenerationConfig(max_length=4096, temperature=0.7, top_p=0.1, repetition_penalty=1.18, top_k=40, do_sample=True)
 
 def extract_and_split(extracted_text_list, uploaded_file, isSyllabus):
     extracted_text = extract_file_data(uploaded_file)
@@ -96,9 +96,11 @@ def needs_info(history: str, user_message: str):
     '''lmql
     sample(temperature=0.7, max_len=4096)
         """[[INST]] <<SYS>>
-        You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature. If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information.
+        You are a helpful, respectful and honest assistant. Always answer as helpfully as possible.
         <</SYS>>"""
-        "{history}{user_message} [[/INST]] Do I need more information? [search] " where search in ["Yes", "No"]
+        "{history}{user_message} [[/INST]] Thought: Do I need to query a database for information? [search] " where search in ["Yes", "No"]
+        if search == "Yes":
+            "Search Query: [query]" where STOPS_AT(query, "\n")
     from
         lmql.model("TheBloke/Llama-2-13B-chat-GPTQ")
     '''
@@ -177,9 +179,10 @@ class SyllabusDatesView(APIView):
         course_name = request.data['courseName']
         vectorsearch.index_name = f"{course_name}-syllabus"
         prompt = "List the important dates contained in the syllabus in chronological order."
-        results = {d.page_content for d in vectorsearch.similarity_search("important dates", 10)}
+        results = {d.page_content for d in vectorsearch.similarity_search(prompt, 10)}
         information = "\n\n".join([f"...{r}..." for r in list(results)])
-        prompt_template = """[INST] <<SYS>>\nYou are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature. If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information.\n<</SYS>>\n{question}\nInformation from Syllabus: {information} [/INST]"""
+        print(information)
+        prompt_template = """[INST] <<SYS>>\nYou are a helpful, respectful and honest assistant. Always answer as helpfully as possible.\n<</SYS>>\n{question}\nInformation from Syllabus: {information} [/INST]"""
         output = tokenizer.decode(model.generate(**tokenizer(prompt_template.format(question=prompt, information=information), return_tensors="pt").to(model.device), generation_config=generation_config)[0]).split("[/INST]")[1].removesuffix("</s>")
         # print(output)
         jsonformer = Jsonformer(model, tokenizer, json_schema, prompt_template.format(question=prompt, information=max(output.split("\n\n"), key=len)), temperature=0.7)
@@ -209,10 +212,12 @@ class ChatbotView(APIView):
                 context += f"{text} </s><s>[INST] "
             else:
                 context += f"{text} [/INST] "
-        search = needs_info(escape("".join(context)), user_message)[0].variables["search"]
+        intermediate_result = needs_info(escape("".join(context)), user_message)[0]
+        print(intermediate_result.prompt)
+        search = intermediate_result.variables["search"]
         print(search)
         if search == "Yes":
-            results = {d.page_content for d in vectorsearch.similarity_search(user_message, 10)}
+            results = {d.page_content for d in vectorsearch.similarity_search(intermediate_result.variables["query"], 10)}
             information = "\n\n".join([f"...{r}..." for r in list(results)])
             print(information)
             context += f"{user_message} \nRelevant Information:\n{information} [/INST] "
@@ -220,6 +225,6 @@ class ChatbotView(APIView):
             context += f"{user_message} [/INST] "
         context_string = "".join(context)
         
-        prompt_template = """[INST] <<SYS>>\nYou are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature. If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information.\n<</SYS>>\n{context}"""
+        prompt_template = """[INST] <<SYS>>\nYou are a helpful, respectful and honest assistant. Always answer as helpfully as possible.\n<</SYS>>\n{context}"""
         output = tokenizer.decode(model.generate(**tokenizer(prompt_template.format(context=context_string), return_tensors="pt").to(model.device), generation_config=generation_config)[0]).split("[/INST]")[-1].removesuffix("</s>").strip()
         return Response(output, status=status.HTTP_200_OK)
