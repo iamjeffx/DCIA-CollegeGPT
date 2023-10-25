@@ -1,6 +1,6 @@
 # DCIA-CollegeGPT
 
-**CollegeGPT** is a web application that allows users to upload Class Syllabi and give a chatbot a user-inputted prompt to grab specific information such as assignment due dates, exam dates, and professor emails. It can also allow the user to add events grabbed into their google calendar promoting more efficient class organization. 
+**CollegeGPT** is a web application that allows users to upload class syllabi. Users can input specific prompts to the chatbot to retrieve information such as assignment due dates, exam dates, and professor emails. Additionally, the application offers the option to add retrieved events to their Google Calendar, promoting efficient class organization.
 
 ## Setup
 To setup locally, follow these steps:
