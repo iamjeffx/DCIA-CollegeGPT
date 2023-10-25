@@ -4,10 +4,10 @@
 
 ## Setup
 To setup locally, follow these steps:
-- 1. Clone the repository:
+  1. Clone the repository:
   *  git clone git@github.com:iamjeffx/DCIA-CollegeGPT.git
 
-  3. Back-end setup
+  2. Back-end setup
   * Ensure that you have django installed as well as an OpenSearch instance created on AWS and provide the connection URL in       the .env file located in the root of the backend directory.
   * Install backend dependencies and start the server
   * requirements.txt pip freeze > requirements.txt
